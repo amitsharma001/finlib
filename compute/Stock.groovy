@@ -49,7 +49,7 @@ class StockData {
     def IntervalName = ['d':'daily', 'w':'weekly', 'm':'monthly']
     String symbol
     String interval = 'd'
-    int daysHistory = 365*4
+    int daysHistory = 365*10
     double averageRet, variance
     def dailyCloses = [], annualCloses = []
     Logger log = LogManager.getLogger("com.betasmart") 
@@ -114,6 +114,7 @@ class StockData {
 
 class Portfolio {
     def stocks = []
+    def correlations = []
     Date startDate, endDate
     def weights = [], returns = []
     int numberOfDays = 3650
@@ -145,22 +146,15 @@ class Portfolio {
             } else if(startDate != useData[-1].date || endDate != useData[0].date) {
                 throw Exception("The return arrays don't match across symbols.")
             }
-            //double[] data = useData.collect { it.dailyReturn }
             returns.add(useData)
         }
         returns = returns.transpose()
         double[][] cov = returns.collectNested { it.dailyReturn }
-        println cov.size()
-        println cov[0].size()
-
-        PearsonsCorrelation c = new PearsonsCorrelation(cov)
-        print c.getCorrelationMatrix()
-        //print returns
-
+        correlations = new PearsonsCorrelation(cov).getCorrelationMatrix()
     }
 
     String toString() {
-        return String.format("LimitingStock: %s, StartDate: %s, EndDate: %s",this.dataLimitingSymbol,startDate.format("MM/dd/yy"),endDate.format("MM/dd/yy"))
+        return "LimitingStock: ${dataLimitingSymbol}, StartDate: ${startDate.format('M-dd-yyyy')}, EndDate: ${endDate.format('M-dd-yyyy')}, Correlations: ${correlations}"
     }
 }
 
