@@ -1,4 +1,3 @@
-
 @Grab(group='org.apache.logging.log4j', module='log4j-core', version='2.3')
 @Grab(group='org.apache.logging.log4j', module='log4j-api', version='2.3')
 @Grab(group='org.codehaus.groovy.modules.http-builder', module='http-builder', version='0.7.2')
@@ -7,11 +6,13 @@
 
 
 import groovyx.net.http.HTTPBuilder
+import groovy.transform.*
 import static groovyx.net.http.ContentType.TEXT
 import org.apache.logging.log4j.*  
 import au.com.bytecode.opencsv.CSVReader
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics
-import org.apache.commons.math3.stat.correlation.PearsonsCorrelation
+import org.apache.commons.math3.stat.correlation.PearsonsCorrelation 
+import org.apache.commons.math3.linear.RealMatrix
 
 /**
  * Created by Amit on 7/18/2014.
@@ -49,18 +50,19 @@ class StockData {
     def IntervalName = ['d':'daily', 'w':'weekly', 'm':'monthly']
     String symbol
     String interval = 'd'
-    int daysHistory = 365*10
     double averageRet, variance
     def dailyCloses = [], annualCloses = []
+    HashMap annualReturns = null
     Logger log = LogManager.getLogger("com.betasmart") 
     
     StockData(symbol) {
         this.symbol = symbol
     }
 
-    def loadData() {
-        def dataSeries = getHistReturns()
+    def loadData(days = 365*4) {
+        def dataSeries = getHistReturns(days)
         dataSeries[0..0] = [] // remove the header
+
         ClosingPrice monthEnd, yearEnd, dayEnd
         def gain = {ClosingPrice past,ClosingPrice now ->(now.closingPrice-past.closingPrice)/past.closingPrice}
 
@@ -80,6 +82,9 @@ class StockData {
             }
             dayEnd = prevDay
         }
+        annualReturns = annualCloses.collectEntries {
+            [it.date.year-1+1900,it.annualReturn*100]
+        }
         double[] returns = dailyCloses.collect { it.dailyReturn }
         DescriptiveStatistics desc = new DescriptiveStatistics(returns)
         this.averageRet = desc.getMean()
@@ -89,19 +94,19 @@ class StockData {
     String toString() {
         StringBuilder bld = new StringBuilder()
         bld.append(String.format("Stock: %s\r\n",symbol))
-        for(ret in annualCloses) {
-            bld.append(String.format("Year: %s, Return: %.2f\r\n",ret.date.format("MM/dd/yy"),ret.annualReturn*100))
+        annualReturns.each { k, v ->
+            printf "%-10d: %8.2f\n",k,v
         }
         return bld.toString()
     }
 
-    def getHistReturns() {
+    def getHistReturns(int days) {
         URL y = new URL("http://ichart.finance.yahoo.com/table.csv")
         Date today = new Date();
-        Date end = today.minus(daysHistory)
+        Date end = today.minus(days)
         def data
         def http = new HTTPBuilder("http://ichart.finance.yahoo.com")
-        log.info(String.format("Getting %s returns for the %s symbol going back %s days.",IntervalName[interval],symbol,daysHistory))
+        log.info(String.format("Getting %s returns for the %s symbol going back %s days.",IntervalName[interval],symbol,days))
         http.get( path: "/table.csv", contentType: TEXT, query:['s':symbol,'a':end[Calendar.MONTH],'b':end[Calendar.DAY_OF_MONTH],'c':end[Calendar.YEAR]
                              ,'d':today[Calendar.MONTH],'e':today[Calendar.DAY_OF_MONTH],'f':today[Calendar.YEAR]
                              ,'g':interval,'ignore':'.csv']) { resp, reader ->
@@ -112,9 +117,21 @@ class StockData {
     }
 }
 
+@CompileStatic
+class MyMatrix {
+    RealMatrix instance = null;
+    MyMatrix(RealMatrix x) {
+        instance = x
+    }
+
+    public double[][] getData() {
+        instance.getData()
+    }
+}
+
 class Portfolio {
     def stocks = []
-    def correlations = []
+    double[][] correlation = null
     Date startDate, endDate
     def weights = [], returns = []
     int numberOfDays = 3650
@@ -123,14 +140,15 @@ class Portfolio {
 
     Portfolio(symbols, weights) {
         this.weights = weights
+        int numberOfCloses = numberOfDays
         if (weights != null && symbols.size() != weights.size())
             throw new Exception("The number of weights should match the number of symbols.")
         for (stock in symbols) {
             def s = new StockData(stock)
-            s.loadData()
+            s.loadData(numberOfDays)
             log.info(String.format("Acquired data for Symbol %s from %s to %s",stock,s.dailyCloses[0].date.format("MM/dd/yy"),s.dailyCloses[-1].date.format("MM/dd/yy")))
-            if(s.dailyCloses.size() < numberOfDays) {
-                numberOfDays = s.dailyCloses.size()
+            if(s.dailyCloses.size() < numberOfCloses) {
+                numberOfCloses = s.dailyCloses.size()
                 dataLimitingSymbol = s.symbol
             }
             stocks.add(s)
@@ -139,25 +157,32 @@ class Portfolio {
         log.info(String.format("Usable data %d days because of symbol %s",numberOfDays,dataLimitingSymbol))
         int k = 0
         for(StockData s in stocks) {
-            def useData = s.dailyCloses[0..(numberOfDays-1)]
+            def useData = s.dailyCloses[0..(numberOfCloses-1)]
             if(startDate == null) {
                 startDate = useData[-1].date
                 endDate = useData[0].date
             } else if(startDate != useData[-1].date || endDate != useData[0].date) {
                 throw Exception("The return arrays don't match across symbols.")
             }
+            //double[] data = useData.collect { it.dailyReturn }
             returns.add(useData)
         }
         returns = returns.transpose()
         double[][] cov = returns.collectNested { it.dailyReturn }
-        correlations = new PearsonsCorrelation(cov).getCorrelationMatrix()
+
+        PearsonsCorrelation c = new PearsonsCorrelation(cov)
+        correlation = new MyMatrix(c.getCorrelationMatrix()).getData()
+        print correlation
+        //println correlationMatrix.metaClass.methods*.name.sort().unique() 
+        //correlation = c.getCorrelationMatrix().getData()
+        //print correlation
     }
 
     String toString() {
-        return "LimitingStock: ${dataLimitingSymbol}, StartDate: ${startDate.format('M-dd-yyyy')}, EndDate: ${endDate.format('M-dd-yyyy')}, Correlations: ${correlations}"
+        return String.format("LimitingStock: %s, StartDate: %s, EndDate: %s",this.dataLimitingSymbol,startDate.format("MM/dd/yy"),endDate.format("MM/dd/yy"))
     }
 }
 
 
-def Y = new Portfolio(["VTI","VEA","VWO","VIG","VNQ"],null)
+def Y = new Portfolio(["VTI","VWO","VEA","VNQ"],null)
 print(Y)
