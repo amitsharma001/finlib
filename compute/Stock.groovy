@@ -12,7 +12,10 @@ import org.apache.logging.log4j.*
 import au.com.bytecode.opencsv.CSVReader
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics
 import org.apache.commons.math3.stat.correlation.PearsonsCorrelation 
+import org.apache.commons.math3.stat.correlation.Covariance
+import org.apache.commons.math3.linear.LUDecomposition
 import org.apache.commons.math3.linear.RealMatrix
+import org.apache.commons.math3.linear.MatrixUtils
 
 /**
  * Created by Amit on 7/18/2014.
@@ -59,7 +62,7 @@ class StockData {
         this.symbol = symbol
     }
 
-    def loadData(days = 365*4) {
+    def loadData(days = 365*11) {
         def dataSeries = getHistReturns(days)
         dataSeries[0..0] = [] // remove the header
 
@@ -85,18 +88,21 @@ class StockData {
         annualReturns = annualCloses.collectEntries {
             [it.date.year-1+1900,it.annualReturn*100]
         }
-        double[] returns = dailyCloses.collect { it.dailyReturn }
-        DescriptiveStatistics desc = new DescriptiveStatistics(returns)
-        this.averageRet = desc.getMean()
+        double[] dreturns = dailyCloses.collect { it.dailyReturn }
+        double[] areturns = annualCloses.collect { it.annualReturn }
+        DescriptiveStatistics desc = new DescriptiveStatistics(areturns)
         this.variance = desc.getStandardDeviation()
+        this.averageRet = desc.getMean()
     }
 
     String toString() {
         StringBuilder bld = new StringBuilder()
-        bld.append(String.format("Stock: %s\r\n",symbol))
+        bld.append(String.format("Stock: %s\n",symbol))
         annualReturns.each { k, v ->
-            printf "%-10d: %8.2f\n",k,v
+            bld.append(sprintf("%-12d: %8.2f %s\n",k,v,"%"))
         }
+        bld.append(sprintf("Variance    : %8.2f %s\n",this.variance*100,"%"))
+        bld.append(sprintf("Avg. Return : %8.2f %s\n",this.averageRet*100,"%"))
         return bld.toString()
     }
 
@@ -131,18 +137,26 @@ class MyMatrix {
 
 class Portfolio {
     def stocks = []
+    def symbols = null
     double[][] correlation = null
     Date startDate, endDate
     def weights = [], returns = []
-    int numberOfDays = 3650
     String dataLimitingSymbol
     Logger log = LogManager.getLogger("com.betasmart") 
 
-    Portfolio(symbols, weights) {
+    Portfolio(def symbols, def weights=null) {
+        this.symbols = symbols
         this.weights = weights
+        if(weights != null) {
+            if(symbols.size() != weights.size()) 
+                throw new Exception(String.format("The number of symbols (%d) should match the number of weights (%d).",symbols.size(),weights.size()))
+            if(weights.sum() != 1)
+                throw new Exception("The weights of the portfolio should add to 1.")
+        }
+    }
+
+    def loadStats(int numberOfDays=3650) {
         int numberOfCloses = numberOfDays
-        if (weights != null && symbols.size() != weights.size())
-            throw new Exception("The number of weights should match the number of symbols.")
         for (stock in symbols) {
             def s = new StockData(stock)
             s.loadData(numberOfDays)
@@ -151,10 +165,10 @@ class Portfolio {
                 numberOfCloses = s.dailyCloses.size()
                 dataLimitingSymbol = s.symbol
             }
+            print(s)
             stocks.add(s)
-            print s
         }
-        log.info(String.format("Usable data %d days because of symbol %s",numberOfDays,dataLimitingSymbol))
+        log.info(String.format("Usable data %d closes because of symbol %s",numberOfCloses,dataLimitingSymbol))
         int k = 0
         for(StockData s in stocks) {
             def useData = s.dailyCloses[0..(numberOfCloses-1)]
@@ -164,18 +178,90 @@ class Portfolio {
             } else if(startDate != useData[-1].date || endDate != useData[0].date) {
                 throw Exception("The return arrays don't match across symbols.")
             }
-            //double[] data = useData.collect { it.dailyReturn }
             returns.add(useData)
         }
         returns = returns.transpose()
-        double[][] cov = returns.collectNested { it.dailyReturn }
-
+        double[][] cov = returns.collectNested { it.dailyReturn }   
         PearsonsCorrelation c = new PearsonsCorrelation(cov)
         correlation = new MyMatrix(c.getCorrelationMatrix()).getData()
         print correlation
-        //println correlationMatrix.metaClass.methods*.name.sort().unique() 
-        //correlation = c.getCorrelationMatrix().getData()
-        //print correlation
+    }
+
+
+    //Compute Risk Parity Portfolio using Newton's method of estimation
+    def compute_risk_parity_portfolio(double[][] corr) {
+        if( corr == null) return
+        int numStock = corr[0].length
+        '''initial guess - equal weighted and a random lambda'''
+        //lam = int(random.random()*100)/100
+        double lamda = 0.1
+        double equiw = 1.0/numStock
+        log.info(String.format("Initial Guess Lambda: %.2f Weight: %.2f",lamda,equiw))
+        RealMatrix cov = MatrixUtils.createRealMatrix(corr)
+        def xw = []
+        numStock.times { xw.add(equiw) }
+        while(true) {
+            def xwv = MatrixUtils.createRealVector(xw as double[])
+            def F_x_cov = cov.operate(xwv)
+            def lamdax = MatrixUtils.createRealVector(xw.collect { lamda/it } as double[])
+            def F_x_top = F_x_cov.subtract(lamdax)
+            double F_x_bot = 0
+            xw.each { F_x_bot += it }
+            F_x_bot -= 1
+            def F_x_nList = F_x_top.toArray().toList()
+            F_x_nList.add(F_x_bot)
+            def F_x_n = MatrixUtils.createRealVector(F_x_nList as double[])
+            def diag = xw.collect { lamda/(it*it) }
+            def J_top_left_lam = MatrixUtils.createRealDiagonalMatrix(diag as double[])
+            def J_top_left = cov.add(J_top_left_lam)
+            def negx = xwv.toArray().collect { -1/(it) }
+            negx.add(0)
+            def J = []
+            J_top_left.getData().eachWithIndex { arr, idx -> 
+                def x = arr.toList(); 
+                x.add(negx[idx]); 
+                J.add(x)
+            }
+            def ones = []
+            numStock.times { ones.add(1) }
+            ones.add(0)
+            J.add(ones)
+            def Yn = xw.collect{ it }
+            Yn.add(lamda)
+            def Ynm = MatrixUtils.createRealVector(Yn as double[])
+            RealMatrix Jm = MatrixUtils.createRealMatrix(J as double[][])
+            def JInverse = new LUDecomposition(Jm).getSolver().getInverse()
+            def yn1 = Ynm.subtract(JInverse.operate(F_x_n))
+            def yn1l = yn1.toArray()
+            lamda = yn1l[-1]
+            def error = xw
+            xw = yn1l[0..-2]
+            error.eachWithIndex{ weight, index -> error[index] = weight - xw[index]}
+            log.info(String.format("Error: %s",error))
+            boolean allzero = true
+            error.each { if(it.round(10) != 0) allzero = false;}
+            if(allzero) break;
+        }
+        return xw
+    }
+
+    def testRiskParity() {
+        def p = new Portfolio(["WFM","MSFT","GOOG","GE"])
+        def vr =  [ 
+            [0.01,  0   , 0.015,         0, 0.02], 
+            [    0, 0.04,  0.03,         0, 0.02],
+            [0.015, 0.03,  0.09,         0, 0.02],
+            [    0, 0   ,     0,    0.2025, 0.01],
+            [    0, 0   ,     0,    0.2025, 0.01]
+        ] as double[][]
+        def x = p.compute_risk_parity_portfolio(vr)
+        print x
+        assert (x[0].round(7)) == (0.3999205774039974d.round(7))
+        assert (x[1].round(7)) == (0.2216712974614022d.round(7))
+        assert (x[2].round(7)) == (0.12669280715894068d.round(7))
+        assert (x[3].round(7)) == (0.12585765898782988d.round(7))
+        assert (x[4].round(7)) == (0.12585765898782988d.round(7))
+        
     }
 
     String toString() {
@@ -184,5 +270,10 @@ class Portfolio {
 }
 
 
-def Y = new Portfolio(["VTI","VWO","VEA","VNQ"],null)
-print(Y)
+def y = new Portfolio(["VTI","VWO"],null)
+StockData s = new StockData("FB")
+s.loadData()
+print s
+//y.loadStats(1000)
+//y.testRiskParity()
+ 
