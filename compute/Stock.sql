@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS stock (
 	PRIMARY KEY (symbol)
 	);
 
-CREATE TABLE IF NOT EXISTS stock_return (
+CREATE TABLE IF NOT EXISTS stock_annual_return (
 	symbol VARCHAR(10), 
 	year int, 
 	annual_return double, 
@@ -17,10 +17,9 @@ CREATE TABLE IF NOT EXISTS stock_return (
 	FOREIGN KEY FK_AR_STOCK (symbol) REFERENCES stock(symbol)
 	);
 
-CREATE TABLE IF NOT EXISTS stock_correlation (
-	symbol1 VARCHAR(10),
-	symbol2 VARCHAR(10),
-	covariance double,
+CREATE TABLE IF NOT EXISTS stock_daily_return (
+	symbol VARCHAR(10),
+	returns VARCHAR(,
 	computed date,
 	PRIMARY KEY (symbol1,symbol2), 
 	FOREIGN KEY FK_SC_STOCK1 (symbol1) REFERENCES stock(symbol),
