@@ -1,12 +1,9 @@
 @Grab(group='org.apache.commons', module='commons-math3', version='3.5')
 
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics
-import org.apache.commons.math3.stat.correlation.PearsonsCorrelation 
-import org.apache.commons.math3.stat.correlation.Covariance
-import org.apache.commons.math3.linear.LUDecomposition
-import org.apache.commons.math3.linear.RealMatrix
-import org.apache.commons.math3.linear.MatrixUtils
-import org.apache.logging.log4j.*
+import org.apache.commons.math3.stat.correlation.*
+import org.apache.commons.math3.linear.*
+import groovy.util.logging.Log
 import groovy.transform.*
 
 
@@ -22,6 +19,7 @@ class MyMatrix {
     }
 }
 
+@Log
 class Portfolio {
     def stocks = []
     def symbols = null
@@ -29,7 +27,6 @@ class Portfolio {
     Date startDate, endDate
     def weights = [], returns = []
     String dataLimitingSymbol
-    Logger log = LogManager.getLogger("com.betasmart") 
 
     Portfolio(def symbols, def weights=null) {
         this.symbols = symbols
@@ -42,14 +39,14 @@ class Portfolio {
         }
     }
 
-    def loadStats(int numberOfDays=3650) {
-        int numberOfCloses = numberOfDays
+    def loadStats() {
+        int numberOfCloses = 3000
         for (stock in symbols) {
             def s = new Stock(stock)
-            s.loadData(numberOfDays)
-            log.info(String.format("Acquired data for Symbol %s from %s to %s",stock,s.dailyCloses[0].date.format("MM/dd/yy"),s.dailyCloses[-1].date.format("MM/dd/yy")))
-            if(s.dailyCloses.size() < numberOfCloses) {
-                numberOfCloses = s.dailyCloses.size()
+            s.loadData()
+            log.info(String.format("Acquired data for Symbol %s from %s to %s",stock,s.dailyReturnsL[0].date.format("MM/dd/yy"),s.dailyReturnsL[-1].date.format("MM/dd/yy")))
+            if(s.dailyReturnsL.size() < numberOfCloses) {
+                numberOfCloses = s.dailyReturnsL.size()
                 dataLimitingSymbol = s.symbol
             }
             print(s)
@@ -58,7 +55,7 @@ class Portfolio {
         log.info(String.format("Usable data %d closes because of symbol %s",numberOfCloses,dataLimitingSymbol))
         int k = 0
         for(Stock s in stocks) {
-            def useData = s.dailyCloses[0..(numberOfCloses-1)]
+            def useData = s.dailyReturnsL[0..(numberOfCloses-1)]
             if(startDate == null) {
                 startDate = useData[-1].date
                 endDate = useData[0].date
@@ -68,7 +65,7 @@ class Portfolio {
             returns.add(useData)
         }
         returns = returns.transpose()
-        double[][] cov = returns.collectNested { it.dailyReturn }   
+        double[][] cov = returns.collectNested { it.theReturn }   
         PearsonsCorrelation c = new PearsonsCorrelation(cov)
         correlation = new MyMatrix(c.getCorrelationMatrix()).getData()
         print correlation

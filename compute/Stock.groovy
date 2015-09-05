@@ -1,5 +1,3 @@
-@Grab(group='org.apache.logging.log4j', module='log4j-core', version='2.3')
-@Grab(group='org.apache.logging.log4j', module='log4j-api', version='2.3')
 @Grab(group='org.codehaus.groovy.modules.http-builder', module='http-builder', version='0.7.2')
 @Grab(group='au.com.bytecode', module='opencsv', version='2.4')
 @Grab(group='org.apache.commons', module='commons-math3', version='3.5')
@@ -8,7 +6,7 @@
 import groovyx.net.http.HTTPBuilder
 import groovy.json.*
 import static groovyx.net.http.ContentType.TEXT
-import org.apache.logging.log4j.*  
+import groovy.util.logging.Log
 import au.com.bytecode.opencsv.CSVReader
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics
 
@@ -76,11 +74,12 @@ Use Yahoo to get monthly returns for a symbol. We simultaneoulsy calculate retur
 
 http://ichart.finance.yahoo.com/table.csv? s=%5EGSPC - symbol &a=00 - start date month (0-11) &b=1  - start date day
 &c=1950 &d=07 &e=1 &f=2009 &g=w -- weekly results, d for daily, and m, for monthly &ignore=.csv  */ 
+@Log
 public class Stock {
 	String symbol    
 	double averageRet, variance     
-    HashMap annualReturns = [:], monthlyReturns = [:], dailyReturns = [:]    
-	Logger log = LogManager.getLogger("com.betasmart")
+    HashMap annualReturns = [:], monthlyReturns = [:], dailyReturns = [:]
+    List dailyReturnsL = []
     
     Stock(symbol) {
         this.symbol = symbol
@@ -103,6 +102,7 @@ public class Stock {
                     dayEnd.date[Calendar.MONTH] != today[Calendar.MONTH] ) {
                     def dr = new IntervalReturn(dayEnd.date,gain(prevDay, dayEnd))
                     dailyReturns[dr.getEncoded()] = dr
+                    dailyReturnsL.add(dr)
                 }
                 if (dayEnd.date[Calendar.YEAR] != prevDay.date[Calendar.YEAR]) {
                     if (yearEnd != null) {

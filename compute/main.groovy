@@ -1,5 +1,5 @@
 //def y = new Portfolio(["VTI","VWO"],null)
-Stock s = new Stock("VTI")
+/*Stock s = new Stock("VTI")
 s.loadData()
 def a = s.IntervalReturnToString(s.annualReturns)
 def m = s.IntervalReturnToString(s.monthlyReturns)
@@ -11,7 +11,7 @@ Stock s2 = new Stock("VTI")
 //s2.StringToIntervalReturn(m,(char)'m')
 s2.StringToIntervalReturn(d,(char)'d')
 print s2
-
+*/
 //s = new Stock("VTI")
 //s.loadData()
 //print s
@@ -19,3 +19,7 @@ print s2
 
 //y.loadStats(1000)
 //y.testRiskParity()
+
+
+Portfolio p = new Portfolio(["VTI","VWO","FB"],null)
+p.loadStats()
