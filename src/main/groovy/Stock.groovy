@@ -1,6 +1,6 @@
-@Grab(group='org.codehaus.groovy.modules.http-builder', module='http-builder', version='0.7.2')
-@Grab(group='au.com.bytecode', module='opencsv', version='2.4')
-@Grab(group='org.apache.commons', module='commons-math3', version='3.5')
+//@Grab(group='org.codehaus.groovy.modules.http-builder', module='http-builder', version='0.7.2')
+//@Grab(group='au.com.bytecode', module='opencsv', version='2.4')
+//@Grab(group='org.apache.commons', module='commons-math3', version='3.5')
 
 
 import groovyx.net.http.HTTPBuilder
@@ -49,8 +49,12 @@ class IntervalReturn {
     void setDecoded(int encodedDate, char type) {
         if(type == 'a') this.year = encodedDate + 2000
         if(type == 'm') {
-            year = (int)(encodedDate / 12)
+            year = (int)(encodedDate / 12) + 2000
             month = encodedDate % 12
+            if(month <= 0) {
+                year -= 1
+                month += 12
+            }
         } 
         if(type == 'd') {
             this.date = IntervalReturn.offset.plus (encodedDate)
@@ -58,7 +62,7 @@ class IntervalReturn {
     }
     int getEncoded() {
         if(date != null) return date.minus(IntervalReturn.offset)
-        if(month != -1) return year > 2000?(year - 2001)*12 + month:month
+        if(month != -1) return (year - 2000)*12 + month
         else if(year != -1) return year - 2000
     }
     String toString() {

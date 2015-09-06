@@ -1,0 +1,63 @@
+apply plugin: 'war'
+apply plugin: 'gaelyk'
+apply plugin: 'appengine-geb'
+
+def compatibilityVersion = 1.7
+sourceCompatibility = compatibilityVersion
+targetCompatibility = compatibilityVersion
+
+buildscript {
+    repositories {
+        mavenCentral()
+        jcenter()
+    }
+
+    dependencies {
+        classpath 'org.gradle.api.plugins:gradle-gaelyk-plugin:0.6'
+        classpath 'org.gradle.api.plugins:gradle-appengine-geb-plugin:0.4'
+    }
+}
+
+repositories {
+    mavenCentral()
+    jcenter()
+}
+
+dependencies {
+    def gaeVersion = '1.9.26'
+    def groovyVersion = '2.4.4'
+
+    compile "org.codehaus.groovy:groovy-all:${groovyVersion}"
+
+    compile "com.google.appengine:appengine-api-1.0-sdk:$gaeVersion",
+            "com.google.appengine:appengine-api-labs:$gaeVersion"
+
+    compile 'org.sitemesh:sitemesh:3.0-alpha-2'
+    compile 'org.gaelyk:gaelyk:2.1.2'
+
+    compile group: 'org.codehaus.groovy.modules.http-builder', name: 'http-builder', version: '0.7.2'
+    compile group: 'au.com.bytecode', name: 'opencsv', version: '2.4'
+    compile group: 'org.apache.commons', name: 'commons-math3', version: '3.5'
+    compile group: 'org.apache.commons', name: 'commons-math3', version: '3.5'
+    
+    testCompile 'junit:junit:4.11'
+
+    //compile group: 'org.apache.ivy', name:'ivy', version: '2.4.0'
+
+    appengineSdk "com.google.appengine:appengine-java-sdk:$gaeVersion"
+
+    /**
+     * To add binary plugin just declare it as a dependency. For example,
+     * uncomment following to add GPars support to your Gaelyk project.
+     * @see https://github.com/musketyr/gpars-appengine
+     */
+    // compile 'org.codehaus.gpars:gpars-appengine:0.1'
+
+    /**
+     * Gaelyk console serves as playground or key-hole surgery tool for
+     * your application
+     * @see https://github.com/gaelyk/gaelyk-console
+     */
+    // compile 'org.gaelyk:gaelyk-console:2.0'
+
+}
