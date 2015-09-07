@@ -3,110 +3,95 @@
 //@Grab(group='org.apache.commons', module='commons-math3', version='3.5')
 
 
-import groovyx.net.http.HTTPBuilder
+import java.net.URL
+import java.io.*
 import groovy.json.*
-import static groovyx.net.http.ContentType.TEXT
 import groovy.util.logging.Log
 import au.com.bytecode.opencsv.CSVReader
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics
-
-/**
- * Created by Amit on 7/18/2014.
- */
-class ClosingPrice {
-    Date date
-    double closingPrice
-
-    ClosingPrice(Date date, double closingPrice) {
-        this.date = date
-        this.closingPrice = closingPrice
-    }
-}
-
-class IntervalReturn {
-    public static Date offset = Date.parse("yyyy-MM-dd hh:mm:ss", "2000-01-01 00:00:00")
-    int year = -1, month = -1
-    Date date = null
-    double theReturn
-
-    IntervalReturn(Date date, double dreturn) {
-        this.date = date
-        this.theReturn = dreturn
-    }
-    IntervalReturn( int month, int year, double mreturn) {
-        this.year = year
-        this.month = month 
-        this.theReturn = mreturn
-    }
-    IntervalReturn(int year, double areturn) {
-        this.year = year
-        this.theReturn = areturn
-    }
-    IntervalReturn(int encodedDate, double treturn, char type) {
-        this.theReturn = treturn
-        setDecoded(encodedDate, type)
-    }
-    void setDecoded(int encodedDate, char type) {
-        if(type == 'a') this.year = encodedDate + 2000
-        if(type == 'm') {
-            year = (int)(encodedDate / 12) + 2000
-            month = encodedDate % 12
-            if(month <= 0) {
-                year -= 1
-                month += 12
-            }
-        } 
-        if(type == 'd') {
-            this.date = IntervalReturn.offset.plus (encodedDate)
-        }        
-    }
-    int getEncoded() {
-        if(date != null) return date.minus(IntervalReturn.offset)
-        if(month != -1) return (year - 2000)*12 + month
-        else if(year != -1) return year - 2000
-    }
-    String toString() {
-        if(date != null) return String.format("Date: %s, Days since 2000: %d, Return: %.4f",date.format("MM/dd/yy"),getEncoded(),theReturn)
-        if(month != -1) return String.format("%d %2d/%-12d: %8.2f %s",getEncoded(),month,year,theReturn,"%")
-        if(year != -1) return String.format("%-12d: %8.2f %s",year,theReturn,"%")
-        return "No date associated with return"
-    }
-}
 
 /*
 Use Yahoo to get monthly returns for a symbol. We simultaneoulsy calculate returns.
 
 http://ichart.finance.yahoo.com/table.csv? s=%5EGSPC - symbol &a=00 - start date month (0-11) &b=1  - start date day
 &c=1950 &d=07 &e=1 &f=2009 &g=w -- weekly results, d for daily, and m, for monthly &ignore=.csv  */ 
+
 @Log
 public class Stock {
 	String symbol    
 	double averageRet, variance     
-    HashMap annualReturns = [:], monthlyReturns = [:], dailyReturns = [:]
-    List dailyReturnsL = []
+    HashMap annualReturns = [:], monthlyReturns = [:] 
+    List dailyReturns = []
+    boolean refreshedFromYahoo = false
     
-    Stock(symbol) {
-        this.symbol = symbol
+    Stock(String symbol) {
+        this.symbol = symbol.toUpperCase()
     }
 
-    void loadData(days = 365*15) {
+    boolean loadDataFromDatabase() {
+        def storedStock = StockData.get(symbol)
+        boolean found = false
+        if(storedStock != null) {
+            stringToIntervalReturn(storedStock.annual_returns,(char)'a')
+            stringToIntervalReturn(storedStock.monthly_returns,(char)'m')
+            stringToIntervalReturn(storedStock.daily_returns,(char)'d')
+            log.info(String.format("Database Hit: Symbol: %s - Latest entry: %s",symbol, dailyReturns[0]))
+            found = true;
+        }
+        return found;
+    }
+
+    boolean saveDataToDataBase() {
+        if(refreshedFromYahoo) {
+            Date today = new Date();
+            def stock = new StockData(
+                symbol:      this.symbol,
+                annual_returns:  intervalReturnToString(annualReturns),
+                monthly_returns:  intervalReturnToString(monthlyReturns),
+                daily_returns:  intervalReturnToString(dailyReturns),
+                date_saved:   today.format("MM/dd/yyyy")
+            )
+            stock.save()
+            log.info(String.format("Database Store: Symbol %s - Date %s",symbol,today.format("MM/dd/yyyy")))
+        }
+    }
+
+    void loadData() {
+        int refreshDays = 365*15
+        if(loadDataFromDatabase()) {
+            Date today = new Date()
+            if( monthlyReturns.values()[1].getEncoded() 
+                == IntervalReturn.getEncoded(today.month+1, today.year) )
+                refreshDays = 1250 // Just get the last 1250 claendar days so we can get 1000 closes
+            else refreshDays = -1 // We are current
+        } 
+        if (refreshDays > 0) loadDataFromYahoo(refreshDays)
+    }
+
+    void loadDataFromYahoo(days = 365*15) {
         def dataSeries = getHistReturns(days)
         dataSeries[0..0] = [] // remove the header
-        Date today = new Date();
+        Date today = new Date()
 
         ClosingPrice monthEnd, yearEnd, dayEnd
-        def gain = {ClosingPrice past,ClosingPrice now ->((now.closingPrice-past.closingPrice)/past.closingPrice).round(5)}
+        def gain = { ClosingPrice past,ClosingPrice now ->
+            double r =((now.closingPrice-past.closingPrice)/past.closingPrice)
+            return Math.round(r*100000)/100000
+        }
         // The data series is returned is reverse chronological order
+        dailyReturns = [] // clear old data now that we have newer results
         for(data in dataSeries) {
-            if(data.size() != 7) throw new Exception("There should be 7 elements in the list.")
+            if(data.size() != 7) {
+                log.error("Parsing failed while retrieving data for %s. There should have been 7 elements.")
+                throw new Exception("There should be 7 elements in the list.")
+            }
             ClosingPrice prevDay = new ClosingPrice(Date.parse('yyyy-MM-dd',data[0]),Double.parseDouble(data[6]))
             
             if(dayEnd != null ) {
                 if( dayEnd.date[Calendar.YEAR] != today[Calendar.YEAR] ||
                     dayEnd.date[Calendar.MONTH] != today[Calendar.MONTH] ) {
                     def dr = new IntervalReturn(dayEnd.date,gain(prevDay, dayEnd))
-                    dailyReturns[dr.getEncoded()] = dr
-                    dailyReturnsL.add(dr)
+                    dailyReturns.add(dr)
                 }
                 if (dayEnd.date[Calendar.YEAR] != prevDay.date[Calendar.YEAR]) {
                     if (yearEnd != null) {
@@ -129,23 +114,28 @@ public class Stock {
             }
             dayEnd = prevDay
         }
+        refreshedFromYahoo = true
     }
 
-    String IntervalReturnToString(returns) {
+    String intervalReturnToString(returns) {
         def json = new JsonBuilder()
-        def list = returns.take(1000).collect { k, v ->
-            [k, v.theReturn]
-        }
+        def list = []
+        if (returns instanceof HashMap)
+            list = returns.collect { k, v -> [k, v.theReturn] }
+        else if (returns instanceof List)
+            list = returns.collect { [it.getEncoded(), it.theReturn] }
         def str = json(list)
         return str
     }
 
-    def StringToIntervalReturn(String jsonText, char type) {
+    def stringToIntervalReturn(String jsonText, char type) {
         def json = new JsonSlurper()
         def list = json.parseText(jsonText)
-        def intReturns = list.collectEntries {
-            [it[0],new IntervalReturn(it[0],it[1],type)]
-        }
+        def intReturns
+        if (type == 'd')
+            intReturns = list.collect { new IntervalReturn(it[0],it[1],type) }
+        else if (type == 'a' || type == 'm')
+            intReturns = list.collectEntries { [it[0],new IntervalReturn(it[0],it[1],type)] }
         if(type == 'd') this.dailyReturns = intReturns
         if(type == 'm') this.monthlyReturns = intReturns
         if(type == 'a') this.annualReturns = intReturns
@@ -175,22 +165,31 @@ public class Stock {
         return bld.toString()
     }
 
-    ArrayList getHistReturns(int days) {
-        URL y = new URL("http://ichart.finance.yahoo.com/table.csv")
+    ArrayList getHistReturns(int days) {   
         def IntervalName = ['d':'daily', 'w':'weekly', 'm':'monthly']
         String interval = 'd'    
         Date today = new Date();
         Date end = today.minus(days)
         def data
-        def http = new HTTPBuilder("http://ichart.finance.yahoo.com")
-        log.info(String.format("Getting %s returns for the %s symbol going back %s days.",IntervalName[interval],symbol,days))
-        http.get( path: "/table.csv", contentType: TEXT, query:['s':symbol,'a':end[Calendar.MONTH],'b':end[Calendar.DAY_OF_MONTH],'c':end[Calendar.YEAR]
-                             ,'d':today[Calendar.MONTH],'e':today[Calendar.DAY_OF_MONTH],'f':today[Calendar.YEAR]
-                             ,'g':interval,'ignore':'.csv']) { resp, reader ->
-                CSVReader cr = new CSVReader(reader)
-                data = cr.readAll()
-            }
+        String urlString = String.format("?s=%s&a=%d&b=%d&c=%d&d=%d&e=%d&f=%d&g=%s&ignore=.csv",symbol,end[Calendar.MONTH],
+                                        end[Calendar.DAY_OF_MONTH],end[Calendar.YEAR],
+                                        today[Calendar.MONTH],today[Calendar.DAY_OF_MONTH],today[Calendar.YEAR],interval)
+        log.info(String.format("Getting url with parameters %s",urlString))
+        URL y = new URL(String.format("http://ichart.finance.yahoo.com/table.csv"+urlString))
+        BufferedReader reader = new BufferedReader(new InputStreamReader(y.openStream()));
+        CSVReader cr = new CSVReader(reader)
+        data = cr.readAll()
         return data
+    }
+}
+
+class ClosingPrice {
+    Date date
+    double closingPrice
+
+    ClosingPrice(Date date, double closingPrice) {
+        this.date = date
+        this.closingPrice = closingPrice
     }
 }
  

@@ -41,9 +41,6 @@ dependencies {
     compile group: 'org.apache.commons', name: 'commons-math3', version: '3.5'
     
     testCompile 'junit:junit:4.11'
-
-    //compile group: 'org.apache.ivy', name:'ivy', version: '2.4.0'
-
     appengineSdk "com.google.appengine:appengine-java-sdk:$gaeVersion"
 
     /**

@@ -10,7 +10,7 @@
             </p>
 
             <p>
-                <a href="/datetime" class="btn btn-primary btn-large">Show current time &raquo;</a>
+                <a href="/stock?symbol=VTI" class="btn btn-primary btn-large">See details on VTI &raquo;</a>
             </p>
         </div>
         <div class="row">
